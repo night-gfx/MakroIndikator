@@ -51,6 +51,8 @@
       <div id="indexList" class="checklist"></div>
       <label>Risk-Indicator-Grenze<input id="threshold" type="number" min="0" max="100" step="1" value="60"></label>
       <label class="row"><input id="prevSignal" type="checkbox" checked> Signal vom Vortag verwenden</label>
+      <label class="row"><input id="useKalmanSignal" type="checkbox"> Kalman-gefilterten Risk Indicator für die Strategie verwenden</label>
+      <p class="settingHint">Der Kalman-Filter glättet den Composite Z-Score adaptiv. Er nutzt ausschließlich Informationen bis zum jeweiligen Handelstag.</p>
       <button id="updateBtn">Aktualisieren</button>
     </aside>
 
@@ -58,6 +60,7 @@
       <nav class="tabs">
         <button class="tab active" data-tab="risk">Risk Indicator</button>
         <button class="tab" data-tab="strategy">Strategie</button>
+        <button class="tab" data-tab="kalman">Kalman Filter</button>
         <button class="tab" data-tab="check">Datencheck</button>
       </nav>
 
@@ -74,6 +77,13 @@
           <div class="panel"><h2>Strategie vs. Buy-and-Hold</h2><div id="performanceChart" class="chart strategyBottom"></div></div>
           <div class="panel"><h2>Excess Return gegenüber Buy-and-Hold</h2><div id="excessChart" class="chart strategyBottom"></div></div>
         </div>
+      </section>
+
+      <section id="kalman" class="tabPage">
+        <div class="kpis"><div><span>Letzter Composite Z-Score</span><strong id="kpiKalmanRawZ">n/a</strong></div><div><span>Letzter Kalman Z-Score</span><strong id="kpiKalmanZ">n/a</strong></div><div><span>Kalman CDF Wahrscheinlichkeit</span><strong id="kpiKalmanRisk">n/a</strong></div></div>
+        <div class="panel"><h2>Normal-CDF-Wahrscheinlichkeit: normal vs. Kalman-gefiltert</h2><p class="chartHint">Normal = CDF des ungefilterten Composite Z-Scores. Kalman-gefiltert = CDF des kausal geglätteten Composite Z-Scores. Der Filter verwendet keine zukünftigen Daten.</p><div id="kalmanProbabilityChart" class="chart"></div></div>
+        <div class="panel"><h2>Composite Z-Score: normal vs. Kalman-gefiltert</h2><div id="kalmanZChart" class="chart"></div></div>
+        <div class="panel"><h2>Wie der Filter eingesetzt wird</h2><p class="infoText">Ein Kalman-Filter schätzt aus dem täglichen, verrauschten Composite Z-Score ein geglättetes zugrunde liegendes Risikoniveau. Er kann schnellere Richtungswechsel als lange gleitende Durchschnitte abbilden, bleibt aber ein Filter: Eine Wende kann nicht ohne Unsicherheit oder Verzögerung zuverlässig erkannt werden.</p></div>
       </section>
 
       <section id="check" class="tabPage">

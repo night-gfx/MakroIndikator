@@ -42,3 +42,13 @@ Data.xlsx     # Zeitreihen und Metadaten
 ## Hinweis zu Daten
 
 `Data.xlsx` wird für jeden Besucher der GitHub-Pages-Seite abrufbar. Keine Bloomberg- oder sonstigen nicht öffentlich weitergabefähigen Daten in ein öffentliches Repository hochladen.
+
+
+## Kalman Filter
+
+Der Tab **Kalman Filter** zeigt zwei Varianten des Risikoindikators:
+
+- **Normal-CDF (ungefiltert):** Normal-CDF des täglichen Composite Z-Scores.
+- **Normal-CDF (Kalman-gefiltert):** Zuerst wird der Composite Z-Score mit einem kausalen Local-Level-Kalman-Filter geglättet, danach wird die Normal-CDF berechnet.
+
+Der Filter nutzt für den jeweiligen Handelstag nur historische Werte bis einschließlich dieses Tages. In der Sidebar kann die Strategie optional den gefilterten statt des ungefilterten Risk Indicators verwenden.

@@ -124,6 +124,35 @@ function rollZ(arr, window, minp, clip, dir) {
   }
   return out;
 }
+function kalmanFilter(values) {
+  // Kausales Local-Level-Kalman-Modell: nur Werte bis einschließlich heute.
+  const valid = values.filter(v => v != null && Number.isFinite(v));
+  if (!valid.length) return values.map(() => null);
+
+  const mean = valid.reduce((a, b) => a + b, 0) / valid.length;
+  const variance = valid.reduce((a, b) => a + (b - mean) ** 2, 0) / Math.max(valid.length - 1, 1);
+  const measurementNoise = Math.max(variance, 1e-6);
+  // Prozessrauschen relativ zum Messrauschen: reaktionsfähiger als ein langer SMA,
+  // aber weiterhin deutlich stabiler als der ungefilterte tägliche Wert.
+  const processNoise = Math.max(measurementNoise * 0.03, 1e-7);
+
+  let state = null;
+  let covariance = measurementNoise;
+  return values.map(observation => {
+    if (observation == null || !Number.isFinite(observation)) return null;
+    if (state == null) {
+      state = observation;
+      covariance = measurementNoise;
+      return state;
+    }
+    const predictedState = state;
+    const predictedCovariance = covariance + processNoise;
+    const gain = predictedCovariance / (predictedCovariance + measurementNoise);
+    state = predictedState + gain * (observation - predictedState);
+    covariance = (1 - gain) * predictedCovariance;
+    return state;
+  });
+}
 function selectedRisk() { return getSelected('risk_', D.risk.columns); }
 function selectedIndices() { return getSelected('idx_', D.indices.columns); }
 function updateWeightTotal() {
@@ -200,7 +229,9 @@ function calc() {
     // Fixed: only Normal-CDF probability mapping.
     risk.push(composite == null ? null : cdf(composite));
   }
-  return { dates, zscores, comp, risk, cols };
+  const kalmanComp = kalmanFilter(comp);
+  const kalmanRisk = kalmanComp.map(z => z == null ? null : cdf(z));
+  return { dates, zscores, comp, risk, kalmanComp, kalmanRisk, cols };
 }
 function dateMask(d) { return d >= $('startDate').value && d <= $('endDate').value; }
 function commonLayout(height) {
@@ -235,12 +266,42 @@ function update() {
   $('kpiZ').textContent = fmt(lastZ);
   $('kpiRisk').textContent = fmt(lastRisk, 1);
   $('kpiN').textContent = C.cols.length;
+  updateKalmanCharts(C, mask, ds);
   updateStrategy(C);
+}
+function updateKalmanCharts(C, mask, ds) {
+  const rawRisk = C.risk.filter((_, i) => mask[i]);
+  const filteredRisk = C.kalmanRisk.filter((_, i) => mask[i]);
+  const rawZ = C.comp.filter((_, i) => mask[i]);
+  const filteredZ = C.kalmanComp.filter((_, i) => mask[i]);
+
+  const probLayout = commonLayout(420);
+  probLayout.yaxis = { title: 'Normal-CDF Wahrscheinlichkeit (%)', range: [0, 100], gridcolor: '#edf0f4', zeroline: false };
+  Plotly.react('kalmanProbabilityChart', [
+    { x: ds, y: rawRisk, name: 'Normal-CDF (ungefiltert)', mode: 'lines', line: { width: 1.6, color: '#64748b' } },
+    { x: ds, y: filteredRisk, name: 'Normal-CDF (Kalman-gefiltert)', mode: 'lines', line: { width: 2.6, color: '#2563eb' } }
+  ], probLayout, { responsive: true });
+
+  const zLayout = commonLayout(420);
+  zLayout.yaxis = { title: 'Composite Z-Score', gridcolor: '#edf0f4', zeroline: true, zerolinecolor: '#cbd5e1' };
+  Plotly.react('kalmanZChart', [
+    { x: ds, y: rawZ, name: 'Composite Z-Score (ungefiltert)', mode: 'lines', line: { width: 1.6, color: '#64748b' } },
+    { x: ds, y: filteredZ, name: 'Composite Z-Score (Kalman-gefiltert)', mode: 'lines', line: { width: 2.6, color: '#2563eb' } }
+  ], zLayout, { responsive: true });
+
+  const lastRawZ = [...C.comp].reverse().find(x => x != null);
+  const lastFilteredZ = [...C.kalmanComp].reverse().find(x => x != null);
+  const lastFilteredRisk = [...C.kalmanRisk].reverse().find(x => x != null);
+  $('kpiKalmanRawZ').textContent = fmt(lastRawZ);
+  $('kpiKalmanZ').textContent = fmt(lastFilteredZ);
+  $('kpiKalmanRisk').textContent = fmt(lastFilteredRisk, 1);
 }
 function updateStrategy(C) {
   const idx = selectedIndices();
   const threshold = val('threshold');
-  const compMap = new Map(C.dates.map((d, i) => [d, { risk: C.risk[i], comp: C.comp[i] }]));
+  const useKalman = $('useKalmanSignal').checked;
+  const riskSeries = useKalman ? C.kalmanRisk : C.risk;
+  const compMap = new Map(C.dates.map((d, i) => [d, { risk: riskSeries[i], comp: C.comp[i] }]));
   const rows = D.indices.records
     .map(r => Object.assign({ risk: compMap.get(r.Datum)?.risk ?? null }, r))
     .filter(r => dateMask(r.Datum));
@@ -254,7 +315,7 @@ function updateStrategy(C) {
       x: dates, y: values.map(v => v != null ? v / base * 100 : null), name: c, mode: 'lines', line: { width: 1.8 }
     });
   });
-  strategyTraces.push({ x: dates, y: rows.map(r => r.risk), name: 'Risk Indicator (%)', mode: 'lines', yaxis: 'y2', line: { dash: 'dash', color: '#111827', width: 2.5 } });
+  strategyTraces.push({ x: dates, y: rows.map(r => r.risk), name: useKalman ? 'Risk Indicator (%) – Kalman' : 'Risk Indicator (%)', mode: 'lines', yaxis: 'y2', line: { dash: 'dash', color: '#111827', width: 2.5 } });
   strategyTraces.push({ x: dates, y: dates.map(() => threshold), name: 'Long-Grenze', mode: 'lines', yaxis: 'y2', line: { dash: 'dot', color: '#64748b', width: 1.5 } });
 
   const topLayout = commonLayout(500);
