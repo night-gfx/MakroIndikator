@@ -210,37 +210,71 @@ function empiricalQuantile(values, q) {
   if (lo === hi) return valid[lo];
   return valid[lo] + (valid[hi] - valid[lo]) * (pos - lo);
 }
-function historicalRiskBands(kalmanRisk) {
-  // Kausal: Alle Bänder am Tag t basieren ausschließlich auf Werten bis t-1.
-  // Dadurch gibt es keine feste Risiko-Grenze und keinen Look-Ahead-Bias.
-  const lookback = Math.max(20, Math.floor(val('adaptiveLookback')));
-  const highQ = Math.max(0.55, Math.min(0.99, val('highRiskQuantile') / 100));
-  const low = [], middle = [], high = [];
-  const minHistory = Math.min(20, lookback);
+function median(values) { return empiricalQuantile(values, 0.5); }
+function robustStd(values) {
+  // Robuste Skala der historischen Bewegungen, damit einzelne Krisentage
+  // die Messlatte nicht dauerhaft stark nach oben verschieben.
+  const valid = values.filter(v => v != null && Number.isFinite(v));
+  if (valid.length < 5) return null;
+  const m = median(valid);
+  const absDev = valid.map(v => Math.abs(v - m));
+  const mad = median(absDev);
+  return Math.max(1.4826 * (mad || 0), 0.25);
+}
+function historicalSpikeSignals(kalmanRisk) {
+  // Kausal: Für Tag t nutzt die Berechnung nur Werte bis einschließlich t.
+  // Der Ausschlags-Score kombiniert:
+  // 1) absolute Bewegung, relativ zur bisherigen typischen Bewegung
+  // 2) relative Veränderung zum vorherigen Niveau
+  // Beispiel: 20 -> 40 ist wegen +100 % stark; 60 -> 80 bleibt wegen +20 Punkten
+  // und einer ungewöhnlichen absoluten Bewegung ebenfalls stark.
+  const lookback = Math.max(40, Math.floor(val('spikeLookback', 126)));
+  const horizon = Math.max(1, Math.floor(val('spikeHorizon', 5)));
+  const triggerQ = Math.max(0.60, Math.min(0.99, val('spikeTriggerQuantile', 85) / 100));
+  const absoluteWeight = Math.max(0, Math.min(1, val('absoluteMoveWeight', 60) / 100));
+  const relativeWeight = 1 - absoluteWeight;
+  const score = [], trigger = [], absComponent = [], relComponent = [];
+  const minHistory = Math.min(40, lookback);
+  const levelFloor = 20; // Verhindert, dass sehr niedrige Ausgangswerte den relativen Anteil explodieren lassen.
 
   for (let i = 0; i < kalmanRisk.length; i++) {
-    const history = [];
-    for (let j = Math.max(0, i - lookback); j < i; j++) {
-      const risk = kalmanRisk[j];
-      if (risk != null && Number.isFinite(risk)) history.push(risk);
-    }
-    if (history.length < minHistory) {
-      low.push(null); middle.push(null); high.push(null);
+    const current = kalmanRisk[i];
+    const prev = i >= horizon ? kalmanRisk[i - horizon] : null;
+    if (current == null || prev == null || !Number.isFinite(current) || !Number.isFinite(prev)) {
+      score.push(null); absComponent.push(null); relComponent.push(null); trigger.push(null);
       continue;
     }
-    // Niedrig = unteres Drittel, Mittel = Median, High = frei wählbares oberes Quantil.
-    low.push(empiricalQuantile(history, 1 / 3));
-    middle.push(empiricalQuantile(history, 0.50));
-    high.push(empiricalQuantile(history, highQ));
+
+    const delta = current - prev;
+    // Nur steigende Risiken erzeugen ein Risk-off-Ausschlagssignal.
+    const positiveDelta = Math.max(0, delta);
+    const pastMoves = [];
+    for (let j = Math.max(horizon, i - lookback); j < i; j++) {
+      const a = kalmanRisk[j], b = kalmanRisk[j - horizon];
+      if (a != null && b != null && Number.isFinite(a) && Number.isFinite(b)) pastMoves.push(a - b);
+    }
+    const scale = robustStd(pastMoves);
+    const absMove = scale == null ? null : positiveDelta / scale;
+    const relMove = positiveDelta / Math.max(Math.abs(prev), levelFloor);
+    const combined = absMove == null ? null : absoluteWeight * absMove + relativeWeight * relMove;
+
+    score.push(combined);
+    absComponent.push(absMove);
+    relComponent.push(relMove);
+
+    const history = [];
+    for (let j = Math.max(0, i - lookback); j < i; j++) {
+      if (score[j] != null && Number.isFinite(score[j])) history.push(score[j]);
+    }
+    trigger.push(history.length >= minHistory ? empiricalQuantile(history, triggerQ) : null);
   }
-  return { low, middle, high, highQ };
+  return { score, trigger, absComponent, relComponent, horizon, lookback, triggerQ, absoluteWeight };
 }
-function classifyRiskRegime(risk, bands) {
-  if (risk == null || bands.low == null || bands.middle == null || bands.high == null) return 'n/a';
-  if (risk <= bands.low) return 'Niedrig';
-  if (risk <= bands.middle) return 'Mäßig';
-  if (risk <= bands.high) return 'Erhöht';
-  return 'Hoch';
+function classifySpikeRegime(score, trigger) {
+  if (score == null || trigger == null) return 'n/a';
+  if (score > trigger) return 'Starker Risiko-Ausschlag';
+  if (score > trigger * 0.60) return 'Erhöhte Bewegung';
+  return 'Ruhig';
 }
 function findMsciWorldColumn() {
   return D.indices.columns.find(c => clean(c).toUpperCase() === 'MSCI WORLD')
@@ -266,8 +300,8 @@ function strategyReturnsForMsci(dates, riskSeries, trainStart, trainEnd) {
   const priceByDate = new Map(D.indices.records.map(r => [r.Datum, r[msci]]));
   const usePrevious = $('prevSignal').checked;
   const prices = dates.map(d => priceByDate.get(d) ?? null);
-  const thresholds = historicalRiskBands(riskSeries).high;
-  const signals = riskSeries.map((r, i) => r == null ? null : r <= thresholds[i]);
+  const spike = historicalSpikeSignals(riskSeries);
+  const signals = spike.score.map((v, i) => v == null || spike.trigger[i] == null ? null : v <= spike.trigger[i]);
   const returns = [];
 
   for (let i = 1; i < dates.length; i++) {
@@ -453,8 +487,8 @@ function calc() {
 
   const normalized = normalizedWeightsFromInputs(cols);
   const result = compositeFromWeights(zscores, cols, normalized);
-  const riskBands = historicalRiskBands(result.kalmanRisk);
-  return { dates, zscores, ...result, adaptiveThreshold: riskBands.high, riskBands, cols };
+  const spikeSignals = historicalSpikeSignals(result.kalmanRisk);
+  return { dates, zscores, ...result, spikeSignals, cols };
 }
 function dateMask(d) {
   const start = $('startDate')?.value || '';
@@ -499,39 +533,37 @@ function update() {
 function updateKalmanCharts(C, mask, ds) {
   const filteredRisk = C.kalmanRisk.filter((_, i) => mask[i]);
   const filteredZ = C.kalmanComp.filter((_, i) => mask[i]);
-  const lowBand = C.riskBands.low.filter((_, i) => mask[i]);
-  const midBand = C.riskBands.middle.filter((_, i) => mask[i]);
-  const highBand = C.riskBands.high.filter((_, i) => mask[i]);
+  const spikeScore = C.spikeSignals.score.filter((_, i) => mask[i]);
+  const spikeTrigger = C.spikeSignals.trigger.filter((_, i) => mask[i]);
 
-  const probLayout = commonLayout(420);
-  probLayout.yaxis = { title: 'Kalman Normal-CDF Wahrscheinlichkeit (%)', range: [0, 100], gridcolor: '#edf0f4', zeroline: false };
+  const probLayout = commonLayout(410);
+  probLayout.yaxis = { title: 'Kalman Risk Indicator (%)', range: [0, 100], gridcolor: '#edf0f4', zeroline: false };
   Plotly.react('kalmanProbabilityChart', [
-    { x: ds, y: filteredRisk, name: 'Kalman Risk Indicator (%)', mode: 'lines', line: { width: 2.6, color: '#2563eb' } },
-    { x: ds, y: lowBand, name: 'Niedrig (historisches 33%-Quantil)', mode: 'lines', line: { width: 1.4, dash: 'dot', color: '#16a34a' } },
-    { x: ds, y: midBand, name: 'Mäßig (historischer Median)', mode: 'lines', line: { width: 1.5, dash: 'dot', color: '#f59e0b' } },
-    { x: ds, y: highBand, name: `High Risk (historisches ${Math.round(C.riskBands.highQ * 100)}%-Quantil)`, mode: 'lines', line: { width: 2, dash: 'dot', color: '#dc2626' } }
+    { x: ds, y: filteredRisk, name: 'Kalman Risk Indicator (%)', mode: 'lines', line: { width: 2.6, color: '#2563eb' } }
   ], probLayout, { responsive: true });
 
-  const zLayout = commonLayout(420);
-  zLayout.yaxis = { title: 'Kalman Composite Z-Score', gridcolor: '#edf0f4', zeroline: true, zerolinecolor: '#cbd5e1' };
+  const spikeLayout = commonLayout(410);
+  spikeLayout.yaxis = { title: 'Dynamischer Ausschlags-Score', gridcolor: '#edf0f4', zeroline: true, zerolinecolor: '#cbd5e1' };
   Plotly.react('kalmanZChart', [
-    { x: ds, y: filteredZ, name: 'Kalman Composite Z-Score', mode: 'lines', line: { width: 2.6, color: '#2563eb' } }
-  ], zLayout, { responsive: true });
+    { x: ds, y: spikeScore, name: 'Ausschlags-Score', mode: 'lines', line: { width: 2.6, color: '#7c3aed' } },
+    { x: ds, y: spikeTrigger, name: `Dynamische Trigger-Linie (${Math.round(C.spikeSignals.triggerQ * 100)}%-Quantil)`, mode: 'lines', line: { width: 2, dash: 'dot', color: '#dc2626' } }
+  ], spikeLayout, { responsive: true });
 
   const lastFilteredZ = [...C.kalmanComp].reverse().find(x => x != null);
   const lastFilteredRisk = [...C.kalmanRisk].reverse().find(x => x != null);
-  const lastThreshold = [...C.adaptiveThreshold].reverse().find(x => x != null);
+  const lastTrigger = [...C.spikeSignals.trigger].reverse().find(x => x != null);
   $('kpiKalmanZ').textContent = fmt(lastFilteredZ);
   $('kpiKalmanRisk').textContent = fmt(lastFilteredRisk, 1);
-  $('kpiKalmanThreshold').textContent = fmt(lastThreshold, 1);
+  $('kpiKalmanThreshold').textContent = fmt(lastTrigger, 2);
 }
 function updateStrategy(C) {
   const idx = selectedIndices();
   const riskSeries = C.kalmanRisk;
-  const thresholdSeries = C.riskBands.high;
-  const compMap = new Map(C.dates.map((d, i) => [d, { risk: riskSeries[i], threshold: thresholdSeries[i], low: C.riskBands.low[i], middle: C.riskBands.middle[i] }]));
+  const spikeSeries = C.spikeSignals.score;
+  const triggerSeries = C.spikeSignals.trigger;
+  const compMap = new Map(C.dates.map((d, i) => [d, { risk: riskSeries[i], spike: spikeSeries[i], trigger: triggerSeries[i] }]));
   const rows = D.indices.records
-    .map(r => Object.assign({ risk: compMap.get(r.Datum)?.risk ?? null, threshold: compMap.get(r.Datum)?.threshold ?? null, low: compMap.get(r.Datum)?.low ?? null, middle: compMap.get(r.Datum)?.middle ?? null }, r))
+    .map(r => Object.assign({ risk: compMap.get(r.Datum)?.risk ?? null, spike: compMap.get(r.Datum)?.spike ?? null, trigger: compMap.get(r.Datum)?.trigger ?? null }, r))
     .filter(r => dateMask(r.Datum));
   const dates = rows.map(r => r.Datum);
 
@@ -541,28 +573,29 @@ function updateStrategy(C) {
     const base = values.find(v => v != null && v !== 0);
     if (base != null) strategyTraces.push({ x: dates, y: values.map(v => v != null ? v / base * 100 : null), name: c, mode: 'lines', line: { width: 1.8 } });
   });
-  strategyTraces.push({ x: dates, y: rows.map(r => r.risk), name: 'Kalman Risk Indicator (%)', mode: 'lines', yaxis: 'y2', line: { color: '#111827', width: 2.5 } });
-  strategyTraces.push({ x: dates, y: rows.map(r => r.low), name: 'Niedrig (historisch)', mode: 'lines', yaxis: 'y2', line: { dash: 'dot', color: '#16a34a', width: 1.2 } });
-  strategyTraces.push({ x: dates, y: rows.map(r => r.middle), name: 'Mäßig (historischer Median)', mode: 'lines', yaxis: 'y2', line: { dash: 'dot', color: '#f59e0b', width: 1.3 } });
-  strategyTraces.push({ x: dates, y: rows.map(r => r.threshold), name: `High Risk (historisches ${Math.round(C.riskBands.highQ * 100)}%-Quantil)`, mode: 'lines', yaxis: 'y2', line: { dash: 'dot', color: '#dc2626', width: 2 } });
+  strategyTraces.push({ x: dates, y: rows.map(r => r.risk), name: 'Kalman Risk Indicator (%)', mode: 'lines', yaxis: 'y2', line: { color: '#111827', width: 2.3 } });
+  strategyTraces.push({ x: dates, y: rows.map(r => r.spike), name: 'Ausschlags-Score', mode: 'lines', yaxis: 'y3', line: { color: '#7c3aed', width: 2.4 } });
+  strategyTraces.push({ x: dates, y: rows.map(r => r.trigger), name: 'Dynamische Trigger-Linie', mode: 'lines', yaxis: 'y3', line: { dash: 'dot', color: '#dc2626', width: 2 } });
 
-  const topLayout = commonLayout(500);
+  const topLayout = commonLayout(520);
+  topLayout.margin.r = 105;
   topLayout.yaxis = { title: 'Global Indices (Basis = 100)', gridcolor: '#edf0f4', zeroline: false };
-  topLayout.yaxis2 = { title: 'Kalman Risk Indicator / historische Bänder (%)', overlaying: 'y', side: 'right', range: [0, 100], showgrid: false };
+  topLayout.yaxis2 = { title: 'Kalman Risk (%)', overlaying: 'y', side: 'right', range: [0, 100], showgrid: false };
+  topLayout.yaxis3 = { title: 'Ausschlags-Score', overlaying: 'y', side: 'right', position: 0.94, showgrid: false, zeroline: false };
   Plotly.react('strategyChart', strategyTraces, topLayout, { responsive: true });
 
-  const signals = rows.map(r => r.risk == null || r.threshold == null ? null : r.risk <= r.threshold);
+  const signals = rows.map(r => r.spike == null || r.trigger == null ? null : r.spike <= r.trigger);
   const validSignals = signals.filter(x => x != null);
-  const lastRow = [...rows].reverse().find(r => r.risk != null && r.threshold != null);
-  $('kpiSignal').textContent = !lastRow ? 'n/a' : (lastRow.risk <= lastRow.threshold ? 'Long' : 'Nicht investiert');
+  const lastRow = [...rows].reverse().find(r => r.spike != null && r.trigger != null);
+  $('kpiSignal').textContent = !lastRow ? 'n/a' : (lastRow.spike <= lastRow.trigger ? 'Long' : 'Nicht investiert');
   $('kpiRisk2').textContent = fmt(lastRow?.risk, 1);
-  $('kpiAdaptiveThreshold').textContent = fmt(lastRow?.threshold, 1);
-  $('kpiRiskRegime').textContent = !lastRow ? 'n/a' : classifyRiskRegime(lastRow.risk, lastRow);
+  $('kpiAdaptiveThreshold').textContent = fmt(lastRow?.trigger, 2);
+  $('kpiRiskRegime').textContent = !lastRow ? 'n/a' : classifySpikeRegime(lastRow.spike, lastRow.trigger);
 
   const performance = [], excess = [];
   idx.forEach(c => {
     const values = rows.map(r => r[c]);
-    const first = rows.findIndex(r => r.risk != null && r.threshold != null && r[c] != null);
+    const first = rows.findIndex(r => r.spike != null && r.trigger != null && r[c] != null);
     if (first < 0) return;
     let benchmark = 100, strategy = 100;
     const benchmarkSeries = Array(rows.length).fill(null);

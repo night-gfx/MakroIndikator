@@ -50,13 +50,15 @@
       <h3>Global Indices</h3>
       <div id="indexList" class="checklist"></div>
       <section class="adaptiveBlock">
-        <div class="sectionHeading"><h3>Historische Risiko-Bänder</h3><span class="optimizerTag">Kalman</span></div>
-        <label>Rückblick (Handelstage)<input id="adaptiveLookback" type="number" min="20" max="1500" step="21" value="252"></label>
-        <label>High-Risk-Quantil<input id="highRiskQuantile" type="number" min="55" max="99" step="1" value="80"><span class="inputSuffix">%</span></label>
-        <p class="settingHint">Es gibt keine feste Grenze: Für jeden Tag wird aus den vorherigen Kalman-Werten ein historisches Niedrig-, Mittel- und Hoch-Risiko-Band berechnet. Die Strategie wechselt erst oberhalb der dynamischen High-Risk-Linie in Cash.</p>
+        <div class="sectionHeading"><h3>Dynamische Ausschlags-Erkennung</h3><span class="optimizerTag">Kalman</span></div>
+        <label>Historie für Bewegungen (Handelstage)<input id="spikeLookback" type="number" min="40" max="1500" step="21" value="126"></label>
+        <label>Bewegungsfenster (Handelstage)<input id="spikeHorizon" type="number" min="1" max="30" step="1" value="5"></label>
+        <label>Gewicht absolute Bewegung<input id="absoluteMoveWeight" type="number" min="0" max="100" step="5" value="60"><span class="inputSuffix">%</span></label>
+        <label>Trigger-Quantil<input id="spikeTriggerQuantile" type="number" min="60" max="99" step="1" value="85"><span class="inputSuffix">%</span></label>
+        <p class="settingHint">Keine feste Risiko-Grenze: Der Ausschlags-Score kombiniert ungewöhnlich große absolute Anstiege mit relativen Sprüngen zum vorherigen Niveau. Die Trigger-Linie wird jeden Tag aus den vorangegangenen Ausschlags-Scores berechnet.</p>
       </section>
       <label class="row"><input id="prevSignal" type="checkbox" checked> Signal vom Vortag verwenden</label>
-      <p class="settingHint">Der Kalman-Filter wird für Risk Indicator, dynamische Grenze, Strategie und Optimierung durchgängig verwendet.</p>
+      <p class="settingHint">Der Kalman-Filter wird für Risk Indicator, Ausschlags-Score, Strategie und Optimierung durchgängig verwendet.</p>
 
       <section class="optimizerBlock">
         <div class="sectionHeading"><h3>Gewichte optimieren</h3><span class="optimizerTag">MSCI World</span></div>
@@ -85,8 +87,8 @@
       </section>
 
       <section id="strategy" class="tabPage">
-        <div class="kpis"><div><span>Aktuelles Signal</span><strong id="kpiSignal">n/a</strong></div><div><span>Kalman Risk Indicator %</span><strong id="kpiRisk2">n/a</strong></div><div><span>Aktuelles Risiko-Regime</span><strong id="kpiRiskRegime">n/a</strong></div><div><span>Dynamische High-Risk-Linie</span><strong id="kpiAdaptiveThreshold">n/a</strong></div></div>
-        <div class="panel strategyMain"><h2>Kalman Risk Indicator, historische Risiko-Bänder und Global Indices</h2><p class="chartHint">Die Strategie verwendet ausschließlich den Kalman-gefilterten Risk Indicator. Die High-Risk-Linie ist das gewählte Quantil der vorangegangenen historischen Verteilung und verändert sich jeden Tag.</p><div id="strategyChart" class="chart strategyTop"></div></div>
+        <div class="kpis"><div><span>Aktuelles Signal</span><strong id="kpiSignal">n/a</strong></div><div><span>Kalman Risk Indicator %</span><strong id="kpiRisk2">n/a</strong></div><div><span>Aktuelles Risiko-Regime</span><strong id="kpiRiskRegime">n/a</strong></div><div><span>Dynamische Trigger-Linie</span><strong id="kpiAdaptiveThreshold">n/a</strong></div></div>
+        <div class="panel strategyMain"><h2>Kalman Risk Indicator, dynamische Ausschläge und Global Indices</h2><p class="chartHint">Die Strategie reagiert auf den Kalman-gefilterten Ausschlags-Score. Dieser kombiniert absolute und relative Anstiege; die Trigger-Linie wird täglich aus der bisherigen Verteilung der Ausschläge abgeleitet.</p><div id="strategyChart" class="chart strategyTop"></div></div>
         <div class="strategyBottomGrid">
           <div class="panel"><h2>Strategie vs. Buy-and-Hold</h2><div id="performanceChart" class="chart strategyBottom"></div></div>
           <div class="panel"><h2>Excess Return gegenüber Buy-and-Hold</h2><div id="excessChart" class="chart strategyBottom"></div></div>
@@ -94,10 +96,10 @@
       </section>
 
       <section id="kalman" class="tabPage">
-        <div class="kpis"><div><span>Letzter Kalman Z-Score</span><strong id="kpiKalmanZ">n/a</strong></div><div><span>Kalman CDF Wahrscheinlichkeit</span><strong id="kpiKalmanRisk">n/a</strong></div><div><span>Dynamische High-Risk-Linie</span><strong id="kpiKalmanThreshold">n/a</strong></div></div>
-        <div class="panel"><h2>Kalman Risk Indicator und historische Risiko-Bänder</h2><p class="chartHint">Die Linien zeigen die historische Verteilung der vorherigen Handelstage: Niedrig, Mittelwert und High Risk. Sie sind rein datengetrieben und kausal berechnet.</p><div id="kalmanProbabilityChart" class="chart"></div></div>
+        <div class="kpis"><div><span>Letzter Kalman Z-Score</span><strong id="kpiKalmanZ">n/a</strong></div><div><span>Kalman CDF Wahrscheinlichkeit</span><strong id="kpiKalmanRisk">n/a</strong></div><div><span>Dynamische Trigger-Linie</span><strong id="kpiKalmanThreshold">n/a</strong></div></div>
+        <div class="panel"><h2>Kalman Risk Indicator und dynamischer Ausschlags-Score</h2><p class="chartHint">Der Ausschlags-Score reagiert auf starke Aufwärtsbewegungen im Risikoindikator. Er kombiniert absolute Bewegungen mit relativen Sprüngen; die Trigger-Linie ist rein datengetrieben und kausal berechnet.</p><div id="kalmanProbabilityChart" class="chart"></div></div>
         <div class="panel"><h2>Kalman-gefilterter Composite Z-Score</h2><div id="kalmanZChart" class="chart"></div></div>
-        <div class="panel"><h2>Wie der Filter eingesetzt wird</h2><p class="infoText">Der Kalman-Filter wird durchgängig auf den Composite Z-Score angewendet. Der daraus berechnete Normal-CDF-Perzentilwert wird anschließend relativ zu seiner eigenen bisherigen Verteilung eingeordnet. Die High-Risk-Linie, die Strategie und die Gewichtsoptimierung verwenden nur Informationen bis zum jeweiligen Handelstag.</p></div>
+        <div class="panel"><h2>Wie der Filter eingesetzt wird</h2><p class="infoText">Der Kalman-Filter wird durchgängig auf den Composite Z-Score angewendet. Danach misst der Ausschlags-Score, ob das Risiko ungewöhnlich schnell gestiegen ist – absolut und relativ zum vorherigen Niveau. Trigger-Linie, Strategie und Gewichtsoptimierung verwenden nur Informationen bis zum jeweiligen Handelstag.</p></div>
       </section>
 
       <section id="check" class="tabPage">

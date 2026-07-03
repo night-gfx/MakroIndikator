@@ -77,3 +77,10 @@ Die Strategie verwendet keine feste Schwelle mehr. Der Kalman Risk Indicator wir
 - **Hoch:** oberhalb des gewählten High-Risk-Quantils
 
 Die High-Risk-Linie ist standardmäßig das **80%-Quantil** der vorherigen 252 Handelstage. Sie verändert sich daher automatisch mit dem langfristigen Risikoniveau. Die Strategie ist long bis der Kalman Risk Indicator diese dynamische High-Risk-Linie überschreitet. Alle Bänder verwenden nur frühere Beobachtungen und sind damit kausal.
+
+
+## Dynamische Ausschlags-Strategie
+
+Die Strategie verwendet keine feste Risiko-Grenze. Sie berechnet aus dem Kalman-gefilterten Risikoindikator einen kausalen **Ausschlags-Score**: `absolute Bewegung` relativ zu den bislang typischen Bewegungen und `relative Veränderung` gegenüber dem vorherigen Niveau werden kombiniert. Die tägliche Trigger-Linie ist ein Quantil der vorangegangenen Ausschlags-Scores. Überschreitet der Score diese Linie, wird das Signal auf Nicht investiert gesetzt.
+
+Beispiele: Ein Sprung von 20 auf 40 % ist wegen der hohen relativen Veränderung auffällig. Ein Anstieg von 60 auf 80 % kann ebenfalls ein Signal auslösen, wenn die absolute Bewegung im Vergleich zur jüngeren Historie ungewöhnlich groß ist.
