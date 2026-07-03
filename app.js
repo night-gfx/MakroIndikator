@@ -106,7 +106,12 @@ function erf(x) {
 function cdf(z) { return .5 * (1 + erf(z / Math.sqrt(2))) * 100; }
 function safeId(prefix, c) { return prefix + btoa(unescape(encodeURIComponent(c))).replaceAll('=', ''); }
 function getSelected(prefix, cols) { return cols.filter(c => $(safeId(prefix, c))?.checked); }
-function val(id) { return Number($(id).value); }
+function val(id, fallback = 0) {
+  const el = $(id);
+  if (!el) return fallback;
+  const number = Number(el.value);
+  return Number.isFinite(number) ? number : fallback;
+}
 function series(records, col) { return records.map(r => r[col]); }
 function rollZ(arr, window, minp, clip, dir) {
   const out = [];
@@ -157,7 +162,10 @@ function selectedRisk() { return getSelected('risk_', D.risk.columns); }
 function selectedIndices() { return getSelected('idx_', D.indices.columns); }
 function updateWeightTotal() {
   const selected = selectedRisk();
-  const total = selected.reduce((sum, c) => sum + Math.max(0, Number($(safeId('w_', c)).value) || 0), 0);
+  const total = selected.reduce((sum, c) => {
+    const input = $(safeId('w_', c));
+    return sum + Math.max(0, Number(input?.value) || 0);
+  }, 0);
   const label = $('weightTotal');
   label.textContent = `${fmt(total, 1)} %`;
   label.style.color = Math.abs(total - 100) < 0.01 ? '#166534' : '#92400e';
@@ -167,7 +175,8 @@ function updateWeightTotal() {
 function normalizedWeightsFromInputs(cols) {
   const raw = {};
   const total = cols.reduce((sum, c) => {
-    raw[c] = Math.max(0, Number($(safeId('w_', c)).value) || 0);
+    const input = $(safeId('w_', c));
+    raw[c] = Math.max(0, Number(input?.value) || 0);
     return sum + raw[c];
   }, 0);
   const normalized = {};
@@ -305,8 +314,8 @@ function optimizeWeightsForMsci() {
   const status = $('optimizationStatus');
   const btn = $('optimizeBtn');
   const msci = findMsciWorldColumn();
-  const trainStart = $('startDate').value;
-  const trainEnd = $('optEndDate').value || $('endDate').value;
+  const trainStart = $('startDate')?.value || '';
+  const trainEnd = $('optEndDate')?.value || $('endDate')?.value || '';
   const maxWeightPct = val('maxWeight');
   const maxWeight = maxWeightPct / 100;
 
@@ -383,7 +392,10 @@ function optimizeWeightsForMsci() {
       return;
     }
 
-    cols.forEach((c, i) => { $(safeId('w_', c)).value = (best.weights[i] * 100).toFixed(1); });
+    cols.forEach((c, i) => {
+      const input = $(safeId('w_', c));
+      if (input) input.value = (best.weights[i] * 100).toFixed(1);
+    });
     updateWeightTotal();
     update();
     status.textContent = `Optimiert auf ${msci}: historische annualisierte Sharpe Ratio ${fmt(best.score, 2)} | Training: ${trainStart} bis ${trainEnd}. Die Gewichte wurden fest übernommen.`;
@@ -393,9 +405,9 @@ function optimizeWeightsForMsci() {
 }
 function setup() {
   const dates = D.risk.records.map(r => r.Datum).concat(D.indices.records.map(r => r.Datum)).sort();
-  $('startDate').value = dates[0];
-  $('endDate').value = dates[dates.length - 1];
-  $('optEndDate').value = dates[dates.length - 1];
+  if ($('startDate')) $('startDate').value = dates[0] || '';
+  if ($('endDate')) $('endDate').value = dates[dates.length - 1] || '';
+  if ($('optEndDate')) $('optEndDate').value = dates[dates.length - 1] || '';
 
   const equalWeight = D.risk.columns.length ? 100 / D.risk.columns.length : 0;
   $('riskList').innerHTML = D.risk.columns.map(c => `
@@ -444,7 +456,11 @@ function calc() {
   const riskBands = historicalRiskBands(result.kalmanRisk);
   return { dates, zscores, ...result, adaptiveThreshold: riskBands.high, riskBands, cols };
 }
-function dateMask(d) { return d >= $('startDate').value && d <= $('endDate').value; }
+function dateMask(d) {
+  const start = $('startDate')?.value || '';
+  const end = $('endDate')?.value || '9999-12-31';
+  return d >= start && d <= end;
+}
 function commonLayout(height) {
   return {
     height,
