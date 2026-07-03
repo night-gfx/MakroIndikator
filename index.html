@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MM Risikoindikator Dashboard</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>MM Risikoindikator Dashboard</h1>
+      <p>Static HTML-Version für GitHub Pages: liest Data.xlsx direkt im Browser und erkennt neue Spalten automatisch.</p>
+    </div>
+    <div class="badge">GitHub Pages ready</div>
+  </header>
+
+  <main>
+    <aside class="panel controls">
+      <h2>Einstellungen</h2>
+      <label>Z-Score-Basis<select id="zMethod"><option>Level</option><option>Tagesveränderung</option><option>Prozentuale Veränderung</option></select></label>
+      <label>Rolling Window<input id="rollingWindow" type="number" min="20" max="3000" step="21" value="756"></label>
+      <label>Min. Datenpunkte<input id="minPeriods" type="number" min="20" max="3000" step="21" value="252"></label>
+      <label>Z-Score Clip ±<input id="clipValue" type="number" min="0.5" max="10" step="0.5" value="3"></label>
+      <label>Score-Methode<select id="scoreMethod"><option>Linear 0-100</option><option>Normal-CDF Wahrscheinlichkeit</option></select></label>
+      <label>Startdatum<input id="startDate" type="date"></label>
+      <label>Enddatum<input id="endDate" type="date"></label>
+      <h3>Risk Measures</h3>
+      <div id="riskList" class="checklist"></div>
+      <h3>Global Indices</h3>
+      <div id="indexList" class="checklist"></div>
+      <label>Risk-Indicator-Grenze<input id="threshold" type="number" min="0" max="100" step="1" value="60"></label>
+      <label class="row"><input id="prevSignal" type="checkbox" checked> Signal vom Vortag verwenden</label>
+      <button id="updateBtn">Aktualisieren</button>
+    </aside>
+
+    <section class="content">
+      <nav class="tabs">
+        <button class="tab active" data-tab="risk">Risk Indicator</button>
+        <button class="tab" data-tab="strategy">Strategie</button>
+        <button class="tab" data-tab="check">Datencheck</button>
+      </nav>
+
+      <section id="risk" class="tabPage active">
+        <div class="kpis"><div><span>Composite Risk Z-Score</span><strong id="kpiZ">n/a</strong></div><div><span>Risk Indicator %</span><strong id="kpiRisk">n/a</strong></div><div><span>Anzahl Risk Measures</span><strong id="kpiN">n/a</strong></div></div>
+        <div class="panel"><h2>Rolling Z-Scores der Risk Measures</h2><div id="zChart" class="chart"></div></div>
+        <div class="panel"><h2>Gewichteter Durchschnitt und Risk Indicator %</h2><div id="compositeChart" class="chart"></div></div>
+      </section>
+
+      <section id="strategy" class="tabPage">
+        <div class="kpis"><div><span>Aktuelles Signal</span><strong id="kpiSignal">n/a</strong></div><div><span>Aktueller Risk Indicator %</span><strong id="kpiRisk2">n/a</strong></div><div><span>Long-Anteil im Zeitraum</span><strong id="kpiLongShare">n/a</strong></div></div>
+        <div class="panel"><h2>Risk Indicator vs. Global Indices</h2><div id="strategyChart" class="chart large"></div></div>
+        <div class="panel"><h2>Excess Return der Strategie gegenüber Buy-and-Hold</h2><div id="excessChart" class="chart"></div></div>
+      </section>
+
+      <section id="check" class="tabPage">
+        <div class="grid2">
+          <div class="panel"><h2>Risk Measures</h2><div id="riskMeta"></div></div>
+          <div class="panel"><h2>Global Indices</h2><div id="indexMeta"></div></div>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
