@@ -193,30 +193,45 @@ function compositeFromWeights(zscores, cols, weights) {
   const kalmanRisk = kalmanComp.map(z => z == null ? null : cdf(z));
   return { comp, risk, kalmanComp, kalmanRisk };
 }
-function adaptiveThresholds(kalmanRisk) {
-  // Kausal: Die heutige Grenze verwendet ausschließlich Risikotage bis gestern.
-  const base = val('threshold');
+function empiricalQuantile(values, q) {
+  const valid = values.filter(v => v != null && Number.isFinite(v)).sort((a, b) => a - b);
+  if (!valid.length) return null;
+  const pos = (valid.length - 1) * Math.max(0, Math.min(1, q));
+  const lo = Math.floor(pos), hi = Math.ceil(pos);
+  if (lo === hi) return valid[lo];
+  return valid[lo] + (valid[hi] - valid[lo]) * (pos - lo);
+}
+function historicalRiskBands(kalmanRisk) {
+  // Kausal: Alle Bänder am Tag t basieren ausschließlich auf Werten bis t-1.
+  // Dadurch gibt es keine feste Risiko-Grenze und keinen Look-Ahead-Bias.
   const lookback = Math.max(20, Math.floor(val('adaptiveLookback')));
-  const range = Math.max(0, val('adaptiveRange'));
-  const targetEventRate = 0.15; // 15 % Risikotage als langfristiger neutraler Referenzwert.
-  const out = [];
+  const highQ = Math.max(0.55, Math.min(0.99, val('highRiskQuantile') / 100));
+  const low = [], middle = [], high = [];
+  const minHistory = Math.min(20, lookback);
 
   for (let i = 0; i < kalmanRisk.length; i++) {
-    const events = [];
+    const history = [];
     for (let j = Math.max(0, i - lookback); j < i; j++) {
       const risk = kalmanRisk[j];
-      if (risk != null && Number.isFinite(risk)) events.push(risk > base ? 1 : 0);
+      if (risk != null && Number.isFinite(risk)) history.push(risk);
     }
-    if (events.length < Math.min(20, lookback)) {
-      out.push(base);
+    if (history.length < minHistory) {
+      low.push(null); middle.push(null); high.push(null);
       continue;
     }
-    const eventRate = events.reduce((a, b) => a + b, 0) / events.length;
-    // 0 % Risikotage -> Basis minus Range; 15 % -> Basis; 30 % oder mehr -> Basis plus Range.
-    const adjustment = range * (eventRate - targetEventRate) / targetEventRate;
-    out.push(Math.max(0, Math.min(100, base + Math.max(-range, Math.min(range, adjustment)))));
+    // Niedrig = unteres Drittel, Mittel = Median, High = frei wählbares oberes Quantil.
+    low.push(empiricalQuantile(history, 1 / 3));
+    middle.push(empiricalQuantile(history, 0.50));
+    high.push(empiricalQuantile(history, highQ));
   }
-  return out;
+  return { low, middle, high, highQ };
+}
+function classifyRiskRegime(risk, bands) {
+  if (risk == null || bands.low == null || bands.middle == null || bands.high == null) return 'n/a';
+  if (risk <= bands.low) return 'Niedrig';
+  if (risk <= bands.middle) return 'Mäßig';
+  if (risk <= bands.high) return 'Erhöht';
+  return 'Hoch';
 }
 function findMsciWorldColumn() {
   return D.indices.columns.find(c => clean(c).toUpperCase() === 'MSCI WORLD')
@@ -242,7 +257,7 @@ function strategyReturnsForMsci(dates, riskSeries, trainStart, trainEnd) {
   const priceByDate = new Map(D.indices.records.map(r => [r.Datum, r[msci]]));
   const usePrevious = $('prevSignal').checked;
   const prices = dates.map(d => priceByDate.get(d) ?? null);
-  const thresholds = adaptiveThresholds(riskSeries);
+  const thresholds = historicalRiskBands(riskSeries).high;
   const signals = riskSeries.map((r, i) => r == null ? null : r <= thresholds[i]);
   const returns = [];
 
@@ -426,8 +441,8 @@ function calc() {
 
   const normalized = normalizedWeightsFromInputs(cols);
   const result = compositeFromWeights(zscores, cols, normalized);
-  const adaptiveThreshold = adaptiveThresholds(result.kalmanRisk);
-  return { dates, zscores, ...result, adaptiveThreshold, cols };
+  const riskBands = historicalRiskBands(result.kalmanRisk);
+  return { dates, zscores, ...result, adaptiveThreshold: riskBands.high, riskBands, cols };
 }
 function dateMask(d) { return d >= $('startDate').value && d <= $('endDate').value; }
 function commonLayout(height) {
@@ -468,13 +483,17 @@ function update() {
 function updateKalmanCharts(C, mask, ds) {
   const filteredRisk = C.kalmanRisk.filter((_, i) => mask[i]);
   const filteredZ = C.kalmanComp.filter((_, i) => mask[i]);
-  const adaptive = C.adaptiveThreshold.filter((_, i) => mask[i]);
+  const lowBand = C.riskBands.low.filter((_, i) => mask[i]);
+  const midBand = C.riskBands.middle.filter((_, i) => mask[i]);
+  const highBand = C.riskBands.high.filter((_, i) => mask[i]);
 
   const probLayout = commonLayout(420);
   probLayout.yaxis = { title: 'Kalman Normal-CDF Wahrscheinlichkeit (%)', range: [0, 100], gridcolor: '#edf0f4', zeroline: false };
   Plotly.react('kalmanProbabilityChart', [
     { x: ds, y: filteredRisk, name: 'Kalman Risk Indicator (%)', mode: 'lines', line: { width: 2.6, color: '#2563eb' } },
-    { x: ds, y: adaptive, name: 'Adaptive Grenze', mode: 'lines', line: { width: 2, dash: 'dot', color: '#dc2626' } }
+    { x: ds, y: lowBand, name: 'Niedrig (historisches 33%-Quantil)', mode: 'lines', line: { width: 1.4, dash: 'dot', color: '#16a34a' } },
+    { x: ds, y: midBand, name: 'Mäßig (historischer Median)', mode: 'lines', line: { width: 1.5, dash: 'dot', color: '#f59e0b' } },
+    { x: ds, y: highBand, name: `High Risk (historisches ${Math.round(C.riskBands.highQ * 100)}%-Quantil)`, mode: 'lines', line: { width: 2, dash: 'dot', color: '#dc2626' } }
   ], probLayout, { responsive: true });
 
   const zLayout = commonLayout(420);
@@ -493,10 +512,10 @@ function updateKalmanCharts(C, mask, ds) {
 function updateStrategy(C) {
   const idx = selectedIndices();
   const riskSeries = C.kalmanRisk;
-  const thresholdSeries = C.adaptiveThreshold;
-  const compMap = new Map(C.dates.map((d, i) => [d, { risk: riskSeries[i], threshold: thresholdSeries[i] }]));
+  const thresholdSeries = C.riskBands.high;
+  const compMap = new Map(C.dates.map((d, i) => [d, { risk: riskSeries[i], threshold: thresholdSeries[i], low: C.riskBands.low[i], middle: C.riskBands.middle[i] }]));
   const rows = D.indices.records
-    .map(r => Object.assign({ risk: compMap.get(r.Datum)?.risk ?? null, threshold: compMap.get(r.Datum)?.threshold ?? null }, r))
+    .map(r => Object.assign({ risk: compMap.get(r.Datum)?.risk ?? null, threshold: compMap.get(r.Datum)?.threshold ?? null, low: compMap.get(r.Datum)?.low ?? null, middle: compMap.get(r.Datum)?.middle ?? null }, r))
     .filter(r => dateMask(r.Datum));
   const dates = rows.map(r => r.Datum);
 
@@ -507,11 +526,13 @@ function updateStrategy(C) {
     if (base != null) strategyTraces.push({ x: dates, y: values.map(v => v != null ? v / base * 100 : null), name: c, mode: 'lines', line: { width: 1.8 } });
   });
   strategyTraces.push({ x: dates, y: rows.map(r => r.risk), name: 'Kalman Risk Indicator (%)', mode: 'lines', yaxis: 'y2', line: { color: '#111827', width: 2.5 } });
-  strategyTraces.push({ x: dates, y: rows.map(r => r.threshold), name: 'Adaptive Grenze', mode: 'lines', yaxis: 'y2', line: { dash: 'dot', color: '#dc2626', width: 2 } });
+  strategyTraces.push({ x: dates, y: rows.map(r => r.low), name: 'Niedrig (historisch)', mode: 'lines', yaxis: 'y2', line: { dash: 'dot', color: '#16a34a', width: 1.2 } });
+  strategyTraces.push({ x: dates, y: rows.map(r => r.middle), name: 'Mäßig (historischer Median)', mode: 'lines', yaxis: 'y2', line: { dash: 'dot', color: '#f59e0b', width: 1.3 } });
+  strategyTraces.push({ x: dates, y: rows.map(r => r.threshold), name: `High Risk (historisches ${Math.round(C.riskBands.highQ * 100)}%-Quantil)`, mode: 'lines', yaxis: 'y2', line: { dash: 'dot', color: '#dc2626', width: 2 } });
 
   const topLayout = commonLayout(500);
   topLayout.yaxis = { title: 'Global Indices (Basis = 100)', gridcolor: '#edf0f4', zeroline: false };
-  topLayout.yaxis2 = { title: 'Kalman Risk Indicator / Grenze (%)', overlaying: 'y', side: 'right', range: [0, 100], showgrid: false };
+  topLayout.yaxis2 = { title: 'Kalman Risk Indicator / historische Bänder (%)', overlaying: 'y', side: 'right', range: [0, 100], showgrid: false };
   Plotly.react('strategyChart', strategyTraces, topLayout, { responsive: true });
 
   const signals = rows.map(r => r.risk == null || r.threshold == null ? null : r.risk <= r.threshold);
@@ -520,6 +541,7 @@ function updateStrategy(C) {
   $('kpiSignal').textContent = !lastRow ? 'n/a' : (lastRow.risk <= lastRow.threshold ? 'Long' : 'Nicht investiert');
   $('kpiRisk2').textContent = fmt(lastRow?.risk, 1);
   $('kpiAdaptiveThreshold').textContent = fmt(lastRow?.threshold, 1);
+  $('kpiRiskRegime').textContent = !lastRow ? 'n/a' : classifyRiskRegime(lastRow.risk, lastRow);
 
   const performance = [], excess = [];
   idx.forEach(c => {

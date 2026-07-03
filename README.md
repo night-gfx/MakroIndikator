@@ -65,3 +65,15 @@ Die **adaptive Grenze** wird täglich kausal berechnet:
 - Wenige Risikotage im Rückblick → Grenze wird bis maximal 15 Prozentpunkte gesenkt.
 - Viele Risikotage im Rückblick → Grenze wird bis maximal 15 Prozentpunkte angehoben.
 - Die Grenze zum Zeitpunkt *t* nutzt nur Informationen bis *t-1* und verursacht daher keinen Look-Ahead-Bias.
+
+
+## Historische, dynamische Risiko-Grenze
+
+Die Strategie verwendet keine feste Schwelle mehr. Der Kalman Risk Indicator wird jeden Tag relativ zu seiner eigenen vorherigen Verteilung eingeordnet:
+
+- **Niedrig:** unter dem historischen 33%-Quantil
+- **Mäßig:** zwischen 33%-Quantil und Median
+- **Erhöht:** zwischen Median und High-Risk-Quantil
+- **Hoch:** oberhalb des gewählten High-Risk-Quantils
+
+Die High-Risk-Linie ist standardmäßig das **80%-Quantil** der vorherigen 252 Handelstage. Sie verändert sich daher automatisch mit dem langfristigen Risikoniveau. Die Strategie ist long bis der Kalman Risk Indicator diese dynamische High-Risk-Linie überschreitet. Alle Bänder verwenden nur frühere Beobachtungen und sind damit kausal.
