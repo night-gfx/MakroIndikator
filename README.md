@@ -48,3 +48,20 @@ Der Bereich **Gewichte optimieren** maximiert die historische annualisierte Shar
 5. Speichern.
 
 Das Repository muss für GitHub Pages im kostenlosen GitHub-Tarif öffentlich sein.
+
+## Kalman-Filter und adaptive Strategie-Grenze
+
+Die aktuelle Version verwendet den **Kalman-gefilterten Composite Z-Score durchgängig**:
+
+- Risk Indicator: Normal-CDF des Kalman-gefilterten Composite Z-Scores.
+- Strategie: Signale beruhen ausschließlich auf diesem Kalman Risk Indicator.
+- Gewichtsoptimierung: maximiert die historische Sharpe Ratio auf Basis dieses Kalman-Signals für den MSCI World.
+
+Die **adaptive Grenze** wird täglich kausal berechnet:
+
+- Ausgangspunkt ist die einstellbare Basis-Grenze (Standard: 60).
+- Ein Risikotag liegt vor, wenn der Kalman Risk Indicator über der Basis-Grenze liegt.
+- Die Grenze betrachtet die Risikotage der vorherigen 252 Handelstage.
+- Wenige Risikotage im Rückblick → Grenze wird bis maximal 15 Prozentpunkte gesenkt.
+- Viele Risikotage im Rückblick → Grenze wird bis maximal 15 Prozentpunkte angehoben.
+- Die Grenze zum Zeitpunkt *t* nutzt nur Informationen bis *t-1* und verursacht daher keinen Look-Ahead-Bias.

@@ -49,10 +49,15 @@
 
       <h3>Global Indices</h3>
       <div id="indexList" class="checklist"></div>
-      <label>Risk-Indicator-Grenze<input id="threshold" type="number" min="0" max="100" step="1" value="60"></label>
+      <section class="adaptiveBlock">
+        <div class="sectionHeading"><h3>Adaptive Strategie-Grenze</h3><span class="optimizerTag">Kalman</span></div>
+        <label>Basis-Grenze<input id="threshold" type="number" min="0" max="100" step="1" value="60"></label>
+        <label>Rückblick (Handelstage)<input id="adaptiveLookback" type="number" min="20" max="1500" step="21" value="252"></label>
+        <label>Max. Anpassung ±<input id="adaptiveRange" type="number" min="1" max="30" step="1" value="15"></label>
+        <p class="settingHint">Die Grenze sinkt nach längeren ruhigen Phasen und steigt nach gehäuften Risikotagen. Ein Risikotag ist ein Kalman-Risk-Indicator oberhalb der Basis-Grenze. Die Grenze verwendet nur vergangene Tage und erzeugt keinen Look-Ahead-Bias.</p>
+      </section>
       <label class="row"><input id="prevSignal" type="checkbox" checked> Signal vom Vortag verwenden</label>
-      <label class="row"><input id="useKalmanSignal" type="checkbox"> Kalman-gefilterten Risk Indicator für die Strategie verwenden</label>
-      <p class="settingHint">Der Kalman-Filter glättet den Composite Z-Score adaptiv. Er nutzt ausschließlich Informationen bis zum jeweiligen Handelstag.</p>
+      <p class="settingHint">Der Kalman-Filter wird für Risk Indicator, dynamische Grenze, Strategie und Optimierung durchgängig verwendet.</p>
 
       <section class="optimizerBlock">
         <div class="sectionHeading"><h3>Gewichte optimieren</h3><span class="optimizerTag">MSCI World</span></div>
@@ -75,14 +80,14 @@
       </nav>
 
       <section id="risk" class="tabPage active">
-        <div class="kpis"><div><span>Composite Risk Z-Score</span><strong id="kpiZ">n/a</strong></div><div><span>Risk Indicator %</span><strong id="kpiRisk">n/a</strong></div><div><span>Anzahl Risk Measures</span><strong id="kpiN">n/a</strong></div></div>
+        <div class="kpis"><div><span>Kalman Composite Z-Score</span><strong id="kpiZ">n/a</strong></div><div><span>Kalman Risk Indicator %</span><strong id="kpiRisk">n/a</strong></div><div><span>Anzahl Risk Measures</span><strong id="kpiN">n/a</strong></div></div>
         <div class="panel"><h2>Rolling Z-Scores der Risk Measures</h2><div id="zChart" class="chart"></div></div>
-        <div class="panel"><h2>Gewichteter Durchschnitt und Risk Indicator %</h2><div id="compositeChart" class="chart"></div></div>
+        <div class="panel"><h2>Kalman-gefilterter Composite Z-Score und Risk Indicator %</h2><div id="compositeChart" class="chart"></div></div>
       </section>
 
       <section id="strategy" class="tabPage">
-        <div class="kpis"><div><span>Aktuelles Signal</span><strong id="kpiSignal">n/a</strong></div><div><span>Aktueller Risk Indicator %</span><strong id="kpiRisk2">n/a</strong></div><div><span>Long-Anteil im Zeitraum</span><strong id="kpiLongShare">n/a</strong></div></div>
-        <div class="panel strategyMain"><h2>Risk Indicator vs. Global Indices</h2><div id="strategyChart" class="chart strategyTop"></div></div>
+        <div class="kpis"><div><span>Aktuelles Signal</span><strong id="kpiSignal">n/a</strong></div><div><span>Kalman Risk Indicator %</span><strong id="kpiRisk2">n/a</strong></div><div><span>Aktuelle adaptive Grenze</span><strong id="kpiAdaptiveThreshold">n/a</strong></div></div>
+        <div class="panel strategyMain"><h2>Kalman Risk Indicator, adaptive Grenze und Global Indices</h2><p class="chartHint">Die Strategie verwendet ausschließlich den Kalman-gefilterten Risk Indicator. Die adaptive Grenze wird aus der Häufigkeit vergangener Risikotage abgeleitet.</p><div id="strategyChart" class="chart strategyTop"></div></div>
         <div class="strategyBottomGrid">
           <div class="panel"><h2>Strategie vs. Buy-and-Hold</h2><div id="performanceChart" class="chart strategyBottom"></div></div>
           <div class="panel"><h2>Excess Return gegenüber Buy-and-Hold</h2><div id="excessChart" class="chart strategyBottom"></div></div>
@@ -90,10 +95,10 @@
       </section>
 
       <section id="kalman" class="tabPage">
-        <div class="kpis"><div><span>Letzter Composite Z-Score</span><strong id="kpiKalmanRawZ">n/a</strong></div><div><span>Letzter Kalman Z-Score</span><strong id="kpiKalmanZ">n/a</strong></div><div><span>Kalman CDF Wahrscheinlichkeit</span><strong id="kpiKalmanRisk">n/a</strong></div></div>
-        <div class="panel"><h2>Normal-CDF-Wahrscheinlichkeit: normal vs. Kalman-gefiltert</h2><p class="chartHint">Normal = CDF des ungefilterten Composite Z-Scores. Kalman-gefiltert = CDF des kausal geglätteten Composite Z-Scores. Der Filter verwendet keine zukünftigen Daten.</p><div id="kalmanProbabilityChart" class="chart"></div></div>
-        <div class="panel"><h2>Composite Z-Score: normal vs. Kalman-gefiltert</h2><div id="kalmanZChart" class="chart"></div></div>
-        <div class="panel"><h2>Wie der Filter eingesetzt wird</h2><p class="infoText">Ein Kalman-Filter schätzt aus dem täglichen, verrauschten Composite Z-Score ein geglättetes zugrunde liegendes Risikoniveau. Er kann schnellere Richtungswechsel als lange gleitende Durchschnitte abbilden, bleibt aber ein Filter: Eine Wende kann nicht ohne Unsicherheit oder Verzögerung zuverlässig erkannt werden.</p></div>
+        <div class="kpis"><div><span>Letzter Kalman Z-Score</span><strong id="kpiKalmanZ">n/a</strong></div><div><span>Kalman CDF Wahrscheinlichkeit</span><strong id="kpiKalmanRisk">n/a</strong></div><div><span>Aktuelle adaptive Grenze</span><strong id="kpiKalmanThreshold">n/a</strong></div></div>
+        <div class="panel"><h2>Kalman Risk Indicator und adaptive Grenze</h2><p class="chartHint">Die dynamische Grenze sinkt in längeren ruhigen Phasen und steigt bei gehäuften Risikotagen. Beide Reihen sind kausal berechnet.</p><div id="kalmanProbabilityChart" class="chart"></div></div>
+        <div class="panel"><h2>Kalman-gefilterter Composite Z-Score</h2><div id="kalmanZChart" class="chart"></div></div>
+        <div class="panel"><h2>Wie der Filter eingesetzt wird</h2><p class="infoText">Der Kalman-Filter wird durchgängig auf den Composite Z-Score angewendet. Der daraus berechnete Normal-CDF-Perzentilwert steuert den Risk Indicator, die adaptive Schwelle, die Strategie und die Gewichtsoptimierung. Der Filter und die Schwelle nutzen nur Informationen bis zum jeweiligen Handelstag.</p></div>
       </section>
 
       <section id="check" class="tabPage">

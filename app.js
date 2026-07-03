@@ -193,6 +193,31 @@ function compositeFromWeights(zscores, cols, weights) {
   const kalmanRisk = kalmanComp.map(z => z == null ? null : cdf(z));
   return { comp, risk, kalmanComp, kalmanRisk };
 }
+function adaptiveThresholds(kalmanRisk) {
+  // Kausal: Die heutige Grenze verwendet ausschließlich Risikotage bis gestern.
+  const base = val('threshold');
+  const lookback = Math.max(20, Math.floor(val('adaptiveLookback')));
+  const range = Math.max(0, val('adaptiveRange'));
+  const targetEventRate = 0.15; // 15 % Risikotage als langfristiger neutraler Referenzwert.
+  const out = [];
+
+  for (let i = 0; i < kalmanRisk.length; i++) {
+    const events = [];
+    for (let j = Math.max(0, i - lookback); j < i; j++) {
+      const risk = kalmanRisk[j];
+      if (risk != null && Number.isFinite(risk)) events.push(risk > base ? 1 : 0);
+    }
+    if (events.length < Math.min(20, lookback)) {
+      out.push(base);
+      continue;
+    }
+    const eventRate = events.reduce((a, b) => a + b, 0) / events.length;
+    // 0 % Risikotage -> Basis minus Range; 15 % -> Basis; 30 % oder mehr -> Basis plus Range.
+    const adjustment = range * (eventRate - targetEventRate) / targetEventRate;
+    out.push(Math.max(0, Math.min(100, base + Math.max(-range, Math.min(range, adjustment)))));
+  }
+  return out;
+}
 function findMsciWorldColumn() {
   return D.indices.columns.find(c => clean(c).toUpperCase() === 'MSCI WORLD')
     || D.indices.columns.find(c => clean(c).toUpperCase().includes('MSCI WORLD'))
@@ -215,10 +240,10 @@ function strategyReturnsForMsci(dates, riskSeries, trainStart, trainEnd) {
   const msci = findMsciWorldColumn();
   if (!msci) return null;
   const priceByDate = new Map(D.indices.records.map(r => [r.Datum, r[msci]]));
-  const threshold = val('threshold');
   const usePrevious = $('prevSignal').checked;
   const prices = dates.map(d => priceByDate.get(d) ?? null);
-  const signals = riskSeries.map(r => r == null ? null : r <= threshold);
+  const thresholds = adaptiveThresholds(riskSeries);
+  const signals = riskSeries.map((r, i) => r == null ? null : r <= thresholds[i]);
   const returns = [];
 
   for (let i = 1; i < dates.length; i++) {
@@ -307,7 +332,7 @@ function optimizeWeightsForMsci() {
     });
 
     const random = seededRandom(20260703);
-    const useKalman = $('useKalmanSignal').checked;
+    const useKalman = true;
     const existing = normalizedWeightsFromInputs(cols);
     const candidates = [
       cols.map(c => existing[c]),
@@ -401,7 +426,8 @@ function calc() {
 
   const normalized = normalizedWeightsFromInputs(cols);
   const result = compositeFromWeights(zscores, cols, normalized);
-  return { dates, zscores, ...result, cols };
+  const adaptiveThreshold = adaptiveThresholds(result.kalmanRisk);
+  return { dates, zscores, ...result, adaptiveThreshold, cols };
 }
 function dateMask(d) { return d >= $('startDate').value && d <= $('endDate').value; }
 function commonLayout(height) {
@@ -424,15 +450,15 @@ function update() {
   Plotly.react('zChart', zTr, { ...commonLayout(410), yaxis: { title: 'Rolling Z-Score', gridcolor: '#edf0f4', zeroline: true, zerolinecolor: '#cbd5e1' } }, { responsive: true });
 
   const compositeLayout = commonLayout(410);
-  compositeLayout.yaxis = { title: 'Composite Z-Score', gridcolor: '#edf0f4', zeroline: true, zerolinecolor: '#cbd5e1' };
-  compositeLayout.yaxis2 = { title: 'Risk Indicator (%)', overlaying: 'y', side: 'right', range: [0, 100], gridcolor: '#edf0f4' };
+  compositeLayout.yaxis = { title: 'Kalman Composite Z-Score', gridcolor: '#edf0f4', zeroline: true, zerolinecolor: '#cbd5e1' };
+  compositeLayout.yaxis2 = { title: 'Kalman Risk Indicator (%)', overlaying: 'y', side: 'right', range: [0, 100], gridcolor: '#edf0f4' };
   Plotly.react('compositeChart', [
-    { x: ds, y: C.comp.filter((_, i) => mask[i]), name: 'Composite Risk Z-Score', yaxis: 'y', mode: 'lines', line: { width: 2 } },
-    { x: ds, y: C.risk.filter((_, i) => mask[i]), name: 'Risk Indicator (%)', yaxis: 'y2', mode: 'lines', line: { dash: 'dash', width: 2 } }
+    { x: ds, y: C.kalmanComp.filter((_, i) => mask[i]), name: 'Kalman Composite Z-Score', yaxis: 'y', mode: 'lines', line: { width: 2.2, color: '#2563eb' } },
+    { x: ds, y: C.kalmanRisk.filter((_, i) => mask[i]), name: 'Kalman Risk Indicator (%)', yaxis: 'y2', mode: 'lines', line: { dash: 'dash', width: 2.2, color: '#111827' } }
   ], compositeLayout, { responsive: true });
 
-  const lastRisk = [...C.risk].reverse().find(x => x != null);
-  const lastZ = [...C.comp].reverse().find(x => x != null);
+  const lastRisk = [...C.kalmanRisk].reverse().find(x => x != null);
+  const lastZ = [...C.kalmanComp].reverse().find(x => x != null);
   $('kpiZ').textContent = fmt(lastZ);
   $('kpiRisk').textContent = fmt(lastRisk, 1);
   $('kpiN').textContent = C.cols.length;
@@ -440,40 +466,37 @@ function update() {
   updateStrategy(C);
 }
 function updateKalmanCharts(C, mask, ds) {
-  const rawRisk = C.risk.filter((_, i) => mask[i]);
   const filteredRisk = C.kalmanRisk.filter((_, i) => mask[i]);
-  const rawZ = C.comp.filter((_, i) => mask[i]);
   const filteredZ = C.kalmanComp.filter((_, i) => mask[i]);
+  const adaptive = C.adaptiveThreshold.filter((_, i) => mask[i]);
 
   const probLayout = commonLayout(420);
-  probLayout.yaxis = { title: 'Normal-CDF Wahrscheinlichkeit (%)', range: [0, 100], gridcolor: '#edf0f4', zeroline: false };
+  probLayout.yaxis = { title: 'Kalman Normal-CDF Wahrscheinlichkeit (%)', range: [0, 100], gridcolor: '#edf0f4', zeroline: false };
   Plotly.react('kalmanProbabilityChart', [
-    { x: ds, y: rawRisk, name: 'Normal-CDF (ungefiltert)', mode: 'lines', line: { width: 1.6, color: '#64748b' } },
-    { x: ds, y: filteredRisk, name: 'Normal-CDF (Kalman-gefiltert)', mode: 'lines', line: { width: 2.6, color: '#2563eb' } }
+    { x: ds, y: filteredRisk, name: 'Kalman Risk Indicator (%)', mode: 'lines', line: { width: 2.6, color: '#2563eb' } },
+    { x: ds, y: adaptive, name: 'Adaptive Grenze', mode: 'lines', line: { width: 2, dash: 'dot', color: '#dc2626' } }
   ], probLayout, { responsive: true });
 
   const zLayout = commonLayout(420);
-  zLayout.yaxis = { title: 'Composite Z-Score', gridcolor: '#edf0f4', zeroline: true, zerolinecolor: '#cbd5e1' };
+  zLayout.yaxis = { title: 'Kalman Composite Z-Score', gridcolor: '#edf0f4', zeroline: true, zerolinecolor: '#cbd5e1' };
   Plotly.react('kalmanZChart', [
-    { x: ds, y: rawZ, name: 'Composite Z-Score (ungefiltert)', mode: 'lines', line: { width: 1.6, color: '#64748b' } },
-    { x: ds, y: filteredZ, name: 'Composite Z-Score (Kalman-gefiltert)', mode: 'lines', line: { width: 2.6, color: '#2563eb' } }
+    { x: ds, y: filteredZ, name: 'Kalman Composite Z-Score', mode: 'lines', line: { width: 2.6, color: '#2563eb' } }
   ], zLayout, { responsive: true });
 
-  const lastRawZ = [...C.comp].reverse().find(x => x != null);
   const lastFilteredZ = [...C.kalmanComp].reverse().find(x => x != null);
   const lastFilteredRisk = [...C.kalmanRisk].reverse().find(x => x != null);
-  $('kpiKalmanRawZ').textContent = fmt(lastRawZ);
+  const lastThreshold = [...C.adaptiveThreshold].reverse().find(x => x != null);
   $('kpiKalmanZ').textContent = fmt(lastFilteredZ);
   $('kpiKalmanRisk').textContent = fmt(lastFilteredRisk, 1);
+  $('kpiKalmanThreshold').textContent = fmt(lastThreshold, 1);
 }
 function updateStrategy(C) {
   const idx = selectedIndices();
-  const threshold = val('threshold');
-  const useKalman = $('useKalmanSignal').checked;
-  const riskSeries = useKalman ? C.kalmanRisk : C.risk;
-  const compMap = new Map(C.dates.map((d, i) => [d, { risk: riskSeries[i], comp: C.comp[i] }]));
+  const riskSeries = C.kalmanRisk;
+  const thresholdSeries = C.adaptiveThreshold;
+  const compMap = new Map(C.dates.map((d, i) => [d, { risk: riskSeries[i], threshold: thresholdSeries[i] }]));
   const rows = D.indices.records
-    .map(r => Object.assign({ risk: compMap.get(r.Datum)?.risk ?? null }, r))
+    .map(r => Object.assign({ risk: compMap.get(r.Datum)?.risk ?? null, threshold: compMap.get(r.Datum)?.threshold ?? null }, r))
     .filter(r => dateMask(r.Datum));
   const dates = rows.map(r => r.Datum);
 
@@ -481,31 +504,27 @@ function updateStrategy(C) {
   idx.forEach(c => {
     const values = rows.map(r => r[c]);
     const base = values.find(v => v != null && v !== 0);
-    if (base != null) strategyTraces.push({
-      x: dates, y: values.map(v => v != null ? v / base * 100 : null), name: c, mode: 'lines', line: { width: 1.8 }
-    });
+    if (base != null) strategyTraces.push({ x: dates, y: values.map(v => v != null ? v / base * 100 : null), name: c, mode: 'lines', line: { width: 1.8 } });
   });
-  strategyTraces.push({ x: dates, y: rows.map(r => r.risk), name: useKalman ? 'Risk Indicator (%) – Kalman' : 'Risk Indicator (%)', mode: 'lines', yaxis: 'y2', line: { dash: 'dash', color: '#111827', width: 2.5 } });
-  strategyTraces.push({ x: dates, y: dates.map(() => threshold), name: 'Long-Grenze', mode: 'lines', yaxis: 'y2', line: { dash: 'dot', color: '#64748b', width: 1.5 } });
+  strategyTraces.push({ x: dates, y: rows.map(r => r.risk), name: 'Kalman Risk Indicator (%)', mode: 'lines', yaxis: 'y2', line: { color: '#111827', width: 2.5 } });
+  strategyTraces.push({ x: dates, y: rows.map(r => r.threshold), name: 'Adaptive Grenze', mode: 'lines', yaxis: 'y2', line: { dash: 'dot', color: '#dc2626', width: 2 } });
 
   const topLayout = commonLayout(500);
   topLayout.yaxis = { title: 'Global Indices (Basis = 100)', gridcolor: '#edf0f4', zeroline: false };
-  topLayout.yaxis2 = { title: 'Risk Indicator (%)', overlaying: 'y', side: 'right', range: [0, 100], showgrid: false };
+  topLayout.yaxis2 = { title: 'Kalman Risk Indicator / Grenze (%)', overlaying: 'y', side: 'right', range: [0, 100], showgrid: false };
   Plotly.react('strategyChart', strategyTraces, topLayout, { responsive: true });
 
-  const signals = rows.map(r => r.risk == null ? null : r.risk <= threshold);
+  const signals = rows.map(r => r.risk == null || r.threshold == null ? null : r.risk <= r.threshold);
   const validSignals = signals.filter(x => x != null);
-  const lastRisk = [...rows].reverse().find(r => r.risk != null)?.risk;
-  $('kpiSignal').textContent = lastRisk == null ? 'n/a' : (lastRisk <= threshold ? 'Long' : 'Nicht investiert');
-  $('kpiRisk2').textContent = fmt(lastRisk, 1);
-  $('kpiLongShare').textContent = validSignals.length
-    ? (validSignals.filter(Boolean).length / validSignals.length).toLocaleString('de-DE', { style: 'percent', maximumFractionDigits: 1 })
-    : 'n/a';
+  const lastRow = [...rows].reverse().find(r => r.risk != null && r.threshold != null);
+  $('kpiSignal').textContent = !lastRow ? 'n/a' : (lastRow.risk <= lastRow.threshold ? 'Long' : 'Nicht investiert');
+  $('kpiRisk2').textContent = fmt(lastRow?.risk, 1);
+  $('kpiAdaptiveThreshold').textContent = fmt(lastRow?.threshold, 1);
 
   const performance = [], excess = [];
   idx.forEach(c => {
     const values = rows.map(r => r[c]);
-    const first = rows.findIndex(r => r.risk != null && r[c] != null);
+    const first = rows.findIndex(r => r.risk != null && r.threshold != null && r[c] != null);
     if (first < 0) return;
     let benchmark = 100, strategy = 100;
     const benchmarkSeries = Array(rows.length).fill(null);
@@ -516,9 +535,7 @@ function updateStrategy(C) {
     excessSeries[first] = 0;
 
     for (let i = first + 1; i < rows.length; i++) {
-      const ret = (values[i] != null && values[i - 1] != null && values[i - 1] !== 0)
-        ? values[i] / values[i - 1] - 1
-        : 0;
+      const ret = (values[i] != null && values[i - 1] != null && values[i - 1] !== 0) ? values[i] / values[i - 1] - 1 : 0;
       benchmark *= 1 + ret;
       const signal = $('prevSignal').checked ? signals[i - 1] : signals[i];
       if (signal === true) strategy *= 1 + ret;
