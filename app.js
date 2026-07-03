@@ -163,10 +163,199 @@ function updateWeightTotal() {
   label.style.color = Math.abs(total - 100) < 0.01 ? '#166534' : '#92400e';
   label.style.background = Math.abs(total - 100) < 0.01 ? '#dcfce7' : '#fef3c7';
 }
+
+function normalizedWeightsFromInputs(cols) {
+  const raw = {};
+  const total = cols.reduce((sum, c) => {
+    raw[c] = Math.max(0, Number($(safeId('w_', c)).value) || 0);
+    return sum + raw[c];
+  }, 0);
+  const normalized = {};
+  if (!cols.length) return normalized;
+  if (total === 0) cols.forEach(c => normalized[c] = 1 / cols.length);
+  else cols.forEach(c => normalized[c] = raw[c] / total);
+  return normalized;
+}
+function compositeFromWeights(zscores, cols, weights) {
+  const n = zscores.Datum.length;
+  const comp = [], risk = [];
+  for (let i = 0; i < n; i++) {
+    let sum = 0, validWeight = 0;
+    cols.forEach(c => {
+      const z = zscores[c][i];
+      if (z != null) { sum += z * weights[c]; validWeight += weights[c]; }
+    });
+    const composite = validWeight ? sum / validWeight : null;
+    comp.push(composite);
+    risk.push(composite == null ? null : cdf(composite));
+  }
+  const kalmanComp = kalmanFilter(comp);
+  const kalmanRisk = kalmanComp.map(z => z == null ? null : cdf(z));
+  return { comp, risk, kalmanComp, kalmanRisk };
+}
+function findMsciWorldColumn() {
+  return D.indices.columns.find(c => clean(c).toUpperCase() === 'MSCI WORLD')
+    || D.indices.columns.find(c => clean(c).toUpperCase().includes('MSCI WORLD'))
+    || null;
+}
+function mean(values) { return values.reduce((a, b) => a + b, 0) / values.length; }
+function sampleStd(values) {
+  if (values.length < 2) return null;
+  const m = mean(values);
+  return Math.sqrt(values.reduce((a, b) => a + (b - m) ** 2, 0) / (values.length - 1));
+}
+function annualizedSharpe(strategyReturns) {
+  const usable = strategyReturns.filter(x => x != null && Number.isFinite(x));
+  if (usable.length < 60) return -Infinity;
+  const sd = sampleStd(usable);
+  if (!sd || !Number.isFinite(sd)) return -Infinity;
+  return mean(usable) / sd * Math.sqrt(252);
+}
+function strategyReturnsForMsci(dates, riskSeries, trainStart, trainEnd) {
+  const msci = findMsciWorldColumn();
+  if (!msci) return null;
+  const priceByDate = new Map(D.indices.records.map(r => [r.Datum, r[msci]]));
+  const threshold = val('threshold');
+  const usePrevious = $('prevSignal').checked;
+  const prices = dates.map(d => priceByDate.get(d) ?? null);
+  const signals = riskSeries.map(r => r == null ? null : r <= threshold);
+  const returns = [];
+
+  for (let i = 1; i < dates.length; i++) {
+    if (dates[i] < trainStart || dates[i] > trainEnd) continue;
+    if (prices[i] == null || prices[i - 1] == null || prices[i - 1] === 0) continue;
+    const decision = usePrevious ? signals[i - 1] : signals[i];
+    if (decision == null) continue;
+    const dailyReturn = prices[i] / prices[i - 1] - 1;
+    returns.push(decision ? dailyReturn : 0);
+  }
+  return returns;
+}
+function seededRandom(seed) {
+  let t = seed >>> 0;
+  return () => {
+    t += 0x6D2B79F5;
+    let r = Math.imul(t ^ (t >>> 15), 1 | t);
+    r ^= r + Math.imul(r ^ (r >>> 7), 61 | r);
+    return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function randomWeightsWithCap(n, maxWeight, random) {
+  if (n === 0) return [];
+  const cap = Math.max(1 / n, Math.min(1, maxWeight));
+  for (let attempt = 0; attempt < 250; attempt++) {
+    const v = Array.from({ length: n }, () => -Math.log(Math.max(random(), 1e-12)));
+    const total = v.reduce((a, b) => a + b, 0);
+    const weights = v.map(x => x / total);
+    if (Math.max(...weights) <= cap + 1e-12) return weights;
+  }
+  return Array(n).fill(1 / n);
+}
+function scoreCandidateWeights(zscores, cols, candidate, dates, trainStart, trainEnd, useKalman) {
+  const weights = {};
+  cols.forEach((c, i) => weights[c] = candidate[i]);
+  const result = compositeFromWeights(zscores, cols, weights);
+  const riskSeries = useKalman ? result.kalmanRisk : result.risk;
+  const returns = strategyReturnsForMsci(dates, riskSeries, trainStart, trainEnd);
+  if (!returns) return { score: -Infinity, result: null };
+  return { score: annualizedSharpe(returns), result };
+}
+function optimizeWeightsForMsci() {
+  const cols = selectedRisk();
+  const status = $('optimizationStatus');
+  const btn = $('optimizeBtn');
+  const msci = findMsciWorldColumn();
+  const trainStart = $('startDate').value;
+  const trainEnd = $('optEndDate').value || $('endDate').value;
+  const maxWeightPct = val('maxWeight');
+  const maxWeight = maxWeightPct / 100;
+
+  if (!msci) {
+    status.textContent = 'MSCI WORLD wurde im Sheet „data (global indices)“ nicht gefunden.';
+    status.className = 'optimizerStatus warning';
+    return;
+  }
+  if (!cols.length) {
+    status.textContent = 'Bitte mindestens einen Risk Measure auswählen.';
+    status.className = 'optimizerStatus warning';
+    return;
+  }
+  if (maxWeight + 1e-12 < 1 / cols.length) {
+    status.textContent = `Max. Gewicht muss mindestens ${fmt(100 / cols.length, 1)} % betragen, damit 100 % verteilt werden können.`;
+    status.className = 'optimizerStatus warning';
+    return;
+  }
+  if (!trainStart || !trainEnd || trainEnd <= trainStart) {
+    status.textContent = 'Bitte einen gültigen Trainingszeitraum wählen.';
+    status.className = 'optimizerStatus warning';
+    return;
+  }
+
+  btn.disabled = true;
+  status.textContent = 'Optimiere Gewichte auf MSCI WORLD …';
+  status.className = 'optimizerStatus';
+
+  window.setTimeout(() => {
+    const dates = D.risk.records.map(r => r.Datum);
+    const windowLength = val('rollingWindow');
+    const minp = val('minPeriods');
+    const clip = val('clipValue');
+    const zscores = { Datum: dates };
+    cols.forEach(c => {
+      const levels = series(D.risk.records, c);
+      zscores[c] = rollZ(levels, windowLength, minp, clip, $(safeId('inv_', c)).checked ? -1 : 1);
+    });
+
+    const random = seededRandom(20260703);
+    const useKalman = $('useKalmanSignal').checked;
+    const existing = normalizedWeightsFromInputs(cols);
+    const candidates = [
+      cols.map(c => existing[c]),
+      Array(cols.length).fill(1 / cols.length)
+    ];
+    const randomDraws = cols.length <= 6 ? 1800 : 1000;
+    for (let i = 0; i < randomDraws; i++) candidates.push(randomWeightsWithCap(cols.length, maxWeight, random));
+
+    let best = { score: -Infinity, weights: null };
+    for (const candidate of candidates) {
+      const test = scoreCandidateWeights(zscores, cols, candidate, dates, trainStart, trainEnd, useKalman);
+      if (test.score > best.score) best = { score: test.score, weights: candidate.slice() };
+    }
+
+    // Lokale Feinabstimmung um die beste zufällige Lösung.
+    for (let i = 0; i < 500 && best.weights; i++) {
+      const proposal = best.weights.slice();
+      const from = Math.floor(random() * cols.length);
+      let to = Math.floor(random() * cols.length);
+      if (to === from) to = (to + 1) % cols.length;
+      const amount = Math.min(proposal[from], 0.005 + random() * 0.04);
+      proposal[from] -= amount;
+      proposal[to] += amount;
+      if (Math.max(...proposal) > maxWeight + 1e-12 || Math.min(...proposal) < -1e-12) continue;
+      const test = scoreCandidateWeights(zscores, cols, proposal, dates, trainStart, trainEnd, useKalman);
+      if (test.score > best.score) best = { score: test.score, weights: proposal.slice() };
+    }
+
+    if (!best.weights || !Number.isFinite(best.score)) {
+      status.textContent = 'Keine Optimierung möglich: Im Trainingszeitraum gibt es zu wenige gültige Beobachtungen nach Rolling Window / Signallogik.';
+      status.className = 'optimizerStatus warning';
+      btn.disabled = false;
+      return;
+    }
+
+    cols.forEach((c, i) => { $(safeId('w_', c)).value = (best.weights[i] * 100).toFixed(1); });
+    updateWeightTotal();
+    update();
+    status.textContent = `Optimiert auf ${msci}: historische annualisierte Sharpe Ratio ${fmt(best.score, 2)} | Training: ${trainStart} bis ${trainEnd}. Die Gewichte wurden fest übernommen.`;
+    status.className = 'optimizerStatus success';
+    btn.disabled = false;
+  }, 20);
+}
 function setup() {
   const dates = D.risk.records.map(r => r.Datum).concat(D.indices.records.map(r => r.Datum)).sort();
   $('startDate').value = dates[0];
   $('endDate').value = dates[dates.length - 1];
+  $('optEndDate').value = dates[dates.length - 1];
 
   const equalWeight = D.risk.columns.length ? 100 / D.risk.columns.length : 0;
   $('riskList').innerHTML = D.risk.columns.map(c => `
@@ -186,6 +375,7 @@ function setup() {
   renderMeta();
   document.querySelectorAll('input').forEach(e => e.addEventListener('change', () => { updateWeightTotal(); update(); }));
   $('updateBtn').addEventListener('click', update);
+  $('optimizeBtn').addEventListener('click', optimizeWeightsForMsci);
   document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () => {
     document.querySelectorAll('.tab,.tabPage').forEach(x => x.classList.remove('active'));
     b.classList.add('active');
@@ -209,29 +399,9 @@ function calc() {
     zscores[c] = rollZ(levels, window, minp, clip, $(safeId('inv_', c)).checked ? -1 : 1);
   });
 
-  const rawWeights = {}, totalWeight = cols.reduce((sum, c) => {
-    rawWeights[c] = Math.max(0, Number($(safeId('w_', c)).value) || 0);
-    return sum + rawWeights[c];
-  }, 0);
-  const normalized = {};
-  if (totalWeight === 0) cols.forEach(c => normalized[c] = 1 / cols.length);
-  else cols.forEach(c => normalized[c] = rawWeights[c] / totalWeight);
-
-  const comp = [], risk = [];
-  for (let i = 0; i < dates.length; i++) {
-    let sum = 0, validWeight = 0;
-    cols.forEach(c => {
-      const z = zscores[c][i];
-      if (z != null) { sum += z * normalized[c]; validWeight += normalized[c]; }
-    });
-    const composite = validWeight ? sum / validWeight : null;
-    comp.push(composite);
-    // Fixed: only Normal-CDF probability mapping.
-    risk.push(composite == null ? null : cdf(composite));
-  }
-  const kalmanComp = kalmanFilter(comp);
-  const kalmanRisk = kalmanComp.map(z => z == null ? null : cdf(z));
-  return { dates, zscores, comp, risk, kalmanComp, kalmanRisk, cols };
+  const normalized = normalizedWeightsFromInputs(cols);
+  const result = compositeFromWeights(zscores, cols, normalized);
+  return { dates, zscores, ...result, cols };
 }
 function dateMask(d) { return d >= $('startDate').value && d <= $('endDate').value; }
 function commonLayout(height) {

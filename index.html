@@ -53,6 +53,16 @@
       <label class="row"><input id="prevSignal" type="checkbox" checked> Signal vom Vortag verwenden</label>
       <label class="row"><input id="useKalmanSignal" type="checkbox"> Kalman-gefilterten Risk Indicator für die Strategie verwenden</label>
       <p class="settingHint">Der Kalman-Filter glättet den Composite Z-Score adaptiv. Er nutzt ausschließlich Informationen bis zum jeweiligen Handelstag.</p>
+
+      <section class="optimizerBlock">
+        <div class="sectionHeading"><h3>Gewichte optimieren</h3><span class="optimizerTag">MSCI World</span></div>
+        <p class="settingHint">Maximiert die annualisierte historische Sharpe Ratio der Long/Cash-Strategie auf Basis von <strong>MSCI WORLD</strong>. Die resultierenden Gewichte werden anschließend fest in die Eingabefelder übernommen.</p>
+        <label>Trainingsende<input id="optEndDate" type="date"></label>
+        <label>Max. Gewicht je Indikator<input id="maxWeight" type="number" min="20" max="100" step="5" value="40"></label>
+        <button id="optimizeBtn" class="secondaryButton" type="button">Gewichte mit MSCI World optimieren</button>
+        <p id="optimizationStatus" class="optimizerStatus">Noch nicht optimiert.</p>
+      </section>
+
       <button id="updateBtn">Aktualisieren</button>
     </aside>
 

@@ -1,54 +1,50 @@
-# MM Risikoindikator Dashboard – HTML-Version mit `Data.xlsx`
+# MM Risikoindikator Dashboard – HTML/XLSX/Kalman/MSCI-Optimierung
 
-Diese Version läuft statisch über **GitHub Pages**. Sie liest `Data.xlsx` im Browser ein; ein Python- oder Streamlit-Server ist nicht nötig.
+Statische Browser-Version für GitHub Pages. Die Website liest `Data.xlsx` direkt im Browser ein. Python oder Streamlit werden nicht benötigt.
 
 ## Dateien
 
 ```text
-index.html    # Dashboard-Oberfläche
-styles.css    # Layout und responsive Darstellung
-app.js        # Excel-Import, Berechnungen und Diagramme
-Data.xlsx     # Zeitreihen und Metadaten
+index.html      Oberfläche
+app.js          Datenimport, Risikoindikator, Kalman-Filter und Optimierung
+styles.css      Layout
+Data.xlsx       Risikoindikatoren und Global Indices
 ```
-
-## Wichtige Logik
-
-- **Z-Score-Basis:** ausschließlich **Level**.
-- **Score-Methode:** ausschließlich **Normal-CDF Wahrscheinlichkeit**.
-- **Gewichte:** Eingabe als Prozentwerte. Bei allen fünf aktuellen Indikatoren sind anfangs jeweils 20 % gesetzt.
-- **Neue Risikoindikatoren:** Eine zusätzliche Spalte in `data (risk measures)` wird automatisch erkannt, wenn
-  - Zeile 6 einen Namen enthält und
-  - ab Zeile 7 mindestens ein numerischer Wert vorhanden ist.
-  Sie erscheint automatisch in der Risk-Measure-Liste und erhält beim ersten Laden ein gleichgewichtet vorbelegtes Prozentgewicht.
 
 ## Excel-Struktur
 
-- Sheet `data (risk measures)`: Risikoindikatoren
-- Sheet `data (global indices)`: Vergleichsindizes
+Die Datei `Data.xlsx` muss im selben Ordner liegen wie `index.html`.
+
+Erwartete Sheets:
+
+```text
+data (risk measures)
+data (global indices)
+```
+
 - Spalte A: Datum
-- Zeile 6: Dashboard-Name der Zeitreihe
-- Ab Zeile 7: Zeitreihenwerte
+- Zeile 6: Anzeigename der Zeitreihe
+- Ab Zeile 7: Werte
+
+Neue Risikoindikatoren werden automatisch erkannt, sobald sie als zusätzliche Spalte im Sheet `data (risk measures)` ergänzt und in Zeile 6 benannt werden.
+
+## Gewichtsoptimierung auf MSCI World
+
+Der Bereich **Gewichte optimieren** maximiert die historische annualisierte Sharpe Ratio einer Long/Cash-Strategie auf Basis der Zeitreihe `MSCI WORLD` im Sheet `data (global indices)`.
+
+- Optimiert werden nur die aktuell aktivierten Risk Measures.
+- Die aktuelle Schwelle, die Vortags-Signal-Option und optional der Kalman-gefilterte Risk Indicator werden in der Optimierung berücksichtigt.
+- Das maximale Gewicht je Indikator begrenzt Konzentrationsrisiken.
+- Nach dem Klick werden die gefundenen Gewichte als Prozentwerte fest in die Gewichtsfelder geschrieben.
+
+**Wichtig:** Das Ergebnis ist eine historische In-Sample-Optimierung bis zum ausgewählten Trainingsende. Es zeigt daher nicht automatisch eine künftig robuste Strategie. Für einen unverzerrten Test sollte das Trainingsende vor dem späteren Auswertungszeitraum liegen, beispielsweise Training bis 2022 und anschließende Prüfung ab 2023.
 
 ## GitHub Pages
 
-1. Dateien in das Repository hochladen.
-2. Repository auf **Public** stellen, sofern GitHub Pages in deinem Tarif für private Repositories nicht verfügbar ist.
-3. Unter **Settings → Pages** einstellen:
-   - Source: `Deploy from a branch`
-   - Branch: `main`
-   - Folder: `/ (root)`
-4. Nach dem Deployment wird die Seite über die angezeigte GitHub-Pages-URL aufgerufen.
+1. Repository auf GitHub öffnen.
+2. `Settings` → `Pages`.
+3. `Deploy from a branch` auswählen.
+4. Branch `main`, Ordner `/(root)` auswählen.
+5. Speichern.
 
-## Hinweis zu Daten
-
-`Data.xlsx` wird für jeden Besucher der GitHub-Pages-Seite abrufbar. Keine Bloomberg- oder sonstigen nicht öffentlich weitergabefähigen Daten in ein öffentliches Repository hochladen.
-
-
-## Kalman Filter
-
-Der Tab **Kalman Filter** zeigt zwei Varianten des Risikoindikators:
-
-- **Normal-CDF (ungefiltert):** Normal-CDF des täglichen Composite Z-Scores.
-- **Normal-CDF (Kalman-gefiltert):** Zuerst wird der Composite Z-Score mit einem kausalen Local-Level-Kalman-Filter geglättet, danach wird die Normal-CDF berechnet.
-
-Der Filter nutzt für den jeweiligen Handelstag nur historische Werte bis einschließlich dieses Tages. In der Sidebar kann die Strategie optional den gefilterten statt des ungefilterten Risk Indicators verwenden.
+Das Repository muss für GitHub Pages im kostenlosen GitHub-Tarif öffentlich sein.
