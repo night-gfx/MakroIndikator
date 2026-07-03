@@ -12,7 +12,7 @@
   <header>
     <div>
       <h1>MM Risikoindikator Dashboard</h1>
-      <p>Static HTML-Version für GitHub Pages: liest Data.xlsx direkt im Browser und erkennt neue Spalten automatisch.</p>
+      <p>Static HTML-Version für GitHub Pages: liest Data.xlsx direkt im Browser und erkennt neue Risikoindikatoren automatisch.</p>
     </div>
     <div class="badge">GitHub Pages ready</div>
   </header>
@@ -20,15 +20,33 @@
   <main>
     <aside class="panel controls">
       <h2>Einstellungen</h2>
-      <label>Z-Score-Basis<select id="zMethod"><option>Level</option><option>Tagesveränderung</option><option>Prozentuale Veränderung</option></select></label>
+
+      <section class="settingBlock">
+        <h3>Z-Score-Basis</h3>
+        <div class="fixedValue">Level</div>
+        <p class="settingHint">Der Indikator verwendet ausschließlich das aktuelle Niveau jeder Zeitreihe.</p>
+      </section>
+
       <label>Rolling Window<input id="rollingWindow" type="number" min="20" max="3000" step="21" value="756"></label>
       <label>Min. Datenpunkte<input id="minPeriods" type="number" min="20" max="3000" step="21" value="252"></label>
       <label>Z-Score Clip ±<input id="clipValue" type="number" min="0.5" max="10" step="0.5" value="3"></label>
-      <label>Score-Methode<select id="scoreMethod"><option>Linear 0-100</option><option>Normal-CDF Wahrscheinlichkeit</option></select></label>
+
+      <section class="settingBlock">
+        <h3>Score-Methode</h3>
+        <div class="fixedValue">Normal-CDF Wahrscheinlichkeit</div>
+        <p class="settingHint">Statistischer Stress-Perzentilwert, keine echte Crash-Wahrscheinlichkeit.</p>
+      </section>
+
       <label>Startdatum<input id="startDate" type="date"></label>
       <label>Enddatum<input id="endDate" type="date"></label>
-      <h3>Risk Measures</h3>
+
+      <div class="sectionHeading">
+        <h3>Risk Measures</h3>
+        <span id="weightTotal" class="weightTotal">0&nbsp;%</span>
+      </div>
+      <p class="settingHint">Gewichte sind Prozentwerte. Neue Spalten in <code>Data.xlsx</code> werden automatisch ergänzt und gleichgewichtet vorbelegt.</p>
       <div id="riskList" class="checklist"></div>
+
       <h3>Global Indices</h3>
       <div id="indexList" class="checklist"></div>
       <label>Risk-Indicator-Grenze<input id="threshold" type="number" min="0" max="100" step="1" value="60"></label>
@@ -51,8 +69,11 @@
 
       <section id="strategy" class="tabPage">
         <div class="kpis"><div><span>Aktuelles Signal</span><strong id="kpiSignal">n/a</strong></div><div><span>Aktueller Risk Indicator %</span><strong id="kpiRisk2">n/a</strong></div><div><span>Long-Anteil im Zeitraum</span><strong id="kpiLongShare">n/a</strong></div></div>
-        <div class="panel"><h2>Risk Indicator vs. Global Indices</h2><div id="strategyChart" class="chart large"></div></div>
-        <div class="panel"><h2>Excess Return der Strategie gegenüber Buy-and-Hold</h2><div id="excessChart" class="chart"></div></div>
+        <div class="panel strategyMain"><h2>Risk Indicator vs. Global Indices</h2><div id="strategyChart" class="chart strategyTop"></div></div>
+        <div class="strategyBottomGrid">
+          <div class="panel"><h2>Strategie vs. Buy-and-Hold</h2><div id="performanceChart" class="chart strategyBottom"></div></div>
+          <div class="panel"><h2>Excess Return gegenüber Buy-and-Hold</h2><div id="excessChart" class="chart strategyBottom"></div></div>
+        </div>
       </section>
 
       <section id="check" class="tabPage">
